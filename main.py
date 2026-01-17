@@ -3,10 +3,228 @@ import fitz  # PyMuPDF
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QFileDialog,
                              QScrollArea, QLabel, QToolBar, QMessageBox,
                              QWidget, QVBoxLayout)
-from PyQt6.QtGui import QPixmap, QImage, QAction, QColor, QPainter
-from PyQt6.QtCore import Qt, QEvent, QTimer
+from PyQt6.QtGui import (QPixmap, QImage, QAction, QColor, QPainter,
+                         QPen, QCursor) # Adicionado QPen, QCursor
+from PyQt6.QtCore import Qt, QEvent, QTimer, QRect # Adicionado QRect
 import os
 
+
+class PDFPageLabel(QLabel):
+    def __init__(self, page_index, main_window):
+        super().__init__()
+        self.page_index = page_index
+        self.main_window = main_window
+
+        # Configurações de Foco e Mouse
+        self.setCursor(Qt.CursorShape.IBeamCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)  # Permite receber teclas (setas)
+        self.setMouseTracking(True)
+
+        # Dados de Texto
+        self.words = []  # Lista de palavras [(x0, y0, x1, y1, text, ...)]
+        self.words_loaded = False
+
+        # Estado da Seleção e Cursor
+        self.caret_index = -1  # Onde o cursor piscante está (índice da palavra)
+        self.anchor_index = -1  # Onde a seleção começou (âncora)
+
+        # Controle do Piscar (Blink)
+        self.caret_visible = False
+        self.blink_timer = QTimer(self)
+        self.blink_timer.setInterval(500)  # Pisca a cada 500ms
+        self.blink_timer.timeout.connect(self.toggle_caret)
+
+    def load_words_if_needed(self):
+        if self.words_loaded or not self.main_window.doc:
+            return
+        try:
+            page = self.main_window.doc.load_page(self.page_index)
+            self.words = page.get_text("words")  # (x0, y0, x1, y1, text, ...)
+            self.words_loaded = True
+        except Exception:
+            pass
+
+    def toggle_caret(self):
+        """Faz o cursor aparecer/desaparecer"""
+        self.caret_visible = not self.caret_visible
+        self.update()  # Redesenha para mostrar/esconder
+
+    def get_word_index_at(self, pos):
+        """Descobre qual palavra está mais próxima do clique"""
+        self.load_words_if_needed()
+        if not self.words:
+            return -1
+
+        zoom = self.main_window.zoom
+        mx, my = pos.x() / zoom, pos.y() / zoom
+
+        # 1. Busca exata
+        for i, w in enumerate(self.words):
+            if w[0] <= mx <= w[2] and w[1] <= my <= w[3]:
+                return i
+
+        # 2. Busca por proximidade (para cliques nas margens ou entre linhas)
+        # Encontra a palavra com menor distância Manhattan
+        closest_idx = -1
+        min_dist = float('inf')
+
+        for i, w in enumerate(self.words):
+            # Centro da palavra
+            cx = (w[0] + w[2]) / 2
+            cy = (w[1] + w[3]) / 2
+            dist = abs(cx - mx) + abs(cy - my)
+            if dist < min_dist:
+                min_dist = dist
+                closest_idx = i
+
+        # Limite de distância (opcional, para não selecionar algo do outro lado da página)
+        if min_dist < 100:
+            return closest_idx
+        return -1
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.setFocus()  # Importante: Pega o foco para ouvir o teclado!
+
+            idx = self.get_word_index_at(event.pos())
+            if idx != -1:
+                # Se segurar Shift, estende a seleção a partir da âncora existente
+                modifiers = QApplication.keyboardModifiers()
+                if modifiers == Qt.KeyboardModifier.ShiftModifier and self.anchor_index != -1:
+                    self.caret_index = idx
+                else:
+                    # Novo clique: reseta âncora e cursor para o mesmo lugar
+                    self.anchor_index = idx
+                    self.caret_index = idx
+
+                self.caret_visible = True
+                self.blink_timer.start()
+                self.update()
+
+    def mouseMoveEvent(self, event):
+        # Arrastar seleciona texto
+        if event.buttons() & Qt.MouseButton.LeftButton:
+            idx = self.get_word_index_at(event.pos())
+            if idx != -1 and idx != self.caret_index:
+                self.caret_index = idx
+                self.caret_visible = True  # Mantém visível enquanto arrasta
+                self.update()
+
+    def keyPressEvent(self, event):
+        """Navegação com teclado (Setas e Cópia)"""
+        if not self.words:
+            return
+
+        key = event.key()
+        modifiers = QApplication.keyboardModifiers()
+        shift_pressed = modifiers == Qt.KeyboardModifier.ShiftModifier
+        ctrl_pressed = modifiers == Qt.KeyboardModifier.ControlModifier
+
+        if key == Qt.Key.Key_C and ctrl_pressed:
+            self.copy_selection()
+            return
+
+        # Lógica de Navegação
+        new_idx = self.caret_index
+
+        if key == Qt.Key.Key_Left:
+            new_idx = max(0, self.caret_index - 1)
+        elif key == Qt.Key.Key_Right:
+            new_idx = min(len(self.words) - 1, self.caret_index + 1)
+        elif key == Qt.Key.Key_Up:
+            # Pula ~10 palavras para trás (simulação simples de linha acima)
+            new_idx = max(0, self.caret_index - 10)
+        elif key == Qt.Key.Key_Down:
+            new_idx = min(len(self.words) - 1, self.caret_index + 10)
+        else:
+            super().keyPressEvent(event)
+            return
+
+        # Atualiza estado
+        if new_idx != self.caret_index:
+            self.caret_index = new_idx
+
+            if not shift_pressed:
+                # Se NÃO tem shift, a âncora segue o cursor (sem seleção)
+                self.anchor_index = new_idx
+
+            self.caret_visible = True
+            self.blink_timer.start()  # Reinicia timer para cursor não sumir enquanto digita
+            self.ensure_cursor_visible()
+            self.update()
+
+    def ensure_cursor_visible(self):
+        """Rola a ScrollArea para seguir o cursor"""
+        if 0 <= self.caret_index < len(self.words):
+            w = self.words[self.caret_index]
+            zoom = self.main_window.zoom
+            # Coordenada Y do cursor na widget
+            y_pos = w[1] * zoom
+            # Altura da viewport
+            viewport = self.main_window.scroll_area.viewport()
+
+            # Se cursor estiver saindo da tela, rolar
+            current_scroll = self.main_window.scroll_area.verticalScrollBar().value()
+            if y_pos < current_scroll:
+                self.main_window.scroll_area.verticalScrollBar().setValue(int(y_pos - 20))
+            elif y_pos > current_scroll + viewport.height():
+                self.main_window.scroll_area.verticalScrollBar().setValue(int(y_pos - viewport.height() + 50))
+
+    def copy_selection(self):
+        if self.anchor_index == -1 or self.caret_index == -1:
+            return
+
+        start = min(self.anchor_index, self.caret_index)
+        end = max(self.anchor_index, self.caret_index)
+
+        selected_words = self.words[start: end + 1]
+        text = " ".join([w[4] for w in selected_words])
+        QApplication.clipboard().setText(text)
+        print("Copiado!")
+
+    def focusOutEvent(self, event):
+        """Para o pisca-pisca quando clica fora"""
+        self.blink_timer.stop()
+        self.caret_visible = False
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)  # Desenha PDF
+
+        if not self.words or self.caret_index == -1:
+            return
+
+        painter = QPainter(self)
+        zoom = self.main_window.zoom
+
+        # 1. Desenhar Seleção (Highlight Azul)
+        if self.anchor_index != self.caret_index and self.anchor_index != -1:
+            start = min(self.anchor_index, self.caret_index)
+            end = max(self.anchor_index, self.caret_index)
+
+            painter.setBrush(QColor(0, 120, 215, 80))  # Azul semi-transparente
+            painter.setPen(Qt.PenStyle.NoPen)
+
+            for i in range(start, end + 1):
+                w = self.words[i]
+                rect = QRect(int(w[0] * zoom), int(w[1] * zoom), int((w[2] - w[0]) * zoom), int((w[3] - w[1]) * zoom))
+                painter.drawRect(rect)
+
+        # 2. Desenhar Cursor Piscante (Caret)
+        if self.hasFocus() and self.caret_visible:
+            w = self.words[self.caret_index]
+
+            # Decide onde desenhar: esquerda da palavra (padrão) ou direita (se fim da seleção)
+            # Para simplificar, desenhamos sempre à esquerda da palavra atual do caret_index
+            cx = int(w[0] * zoom)
+            cy_top = int(w[1] * zoom)
+            cy_bottom = int(w[3] * zoom)
+
+            # Cor do cursor: Vermelho do tema ou Preto dependendo do fundo
+            pen = QPen(QColor("#ff3333"))
+            pen.setWidth(2)
+            painter.setPen(pen)
+            painter.drawLine(cx, cy_top, cx, cy_bottom)
 
 class JustReadApp(QMainWindow):
     def __init__(self):
@@ -126,14 +344,19 @@ class JustReadApp(QMainWindow):
             width = int(rect.width * self.zoom)
             height = int(rect.height * self.zoom)
 
-            label = QLabel()
-            label.setFixedSize(width, height)  # Reserves layout memory, not video memory
+            # --- ALTERAÇÃO AQUI ---
+            # Antes: label = QLabel()
+            # Agora passamos 'i' (índice) e 'self' (a janela principal)
+            label = PDFPageLabel(i, self)
+            # ----------------------
+
+            label.setFixedSize(width, height)
             # Placeholder style (gray background while loading)
             label.setStyleSheet(f"background-color: {self.get_placeholder_bg_color()}; border: 1px solid #333;")
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
             # Store the page index in the object for later use
-            label.page_index = i
+            # label.page_index = i  <-- Não precisa mais setar manualmente, já está no __init__ do PDFPageLabel
             label.is_rendered = False  # Flag for control
 
             self.pages_layout.addWidget(label)
