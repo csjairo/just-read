@@ -1,0 +1,111 @@
+/* style.qss */
+
+/* --- Configurações Globais --- */
+* {
+    /* Fonte padrão limpa */
+    font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 10pt;
+    color: #e0e0e0; /* Cor do texto padrão (branco suave) */
+}
+
+/* Janela Principal e Áreas de Fundo */
+QMainWindow, QWidget {
+    background-color: #1e1e1e; /* Fundo muito escuro */
+}
+
+/* Área de Rolagem onde fica o PDF */
+QScrollArea {
+    border: none;
+    background-color: #1e1e1e;
+}
+
+QLabel {
+    background-color: #1e1e1e;
+    padding: 0px;
+}
+
+/* --- Barra de Ferramentas --- */
+QToolBar {
+    background-color: #2b2b2b; /* Um pouco mais claro que o fundo principal */
+    border-bottom: 2px solid #ff3333; /* Linha vermelha de destaque na parte inferior */
+    padding: 8px;
+    spacing: 15px; /* Espaço entre os botões */
+}
+
+/* Botões da Barra de Ferramentas */
+QToolButton {
+    background-color: transparent;
+    border: 2px solid transparent;
+    border-radius: 6px; /* Cantos arredondados */
+    padding: 8px 12px;
+    font-weight: bold;
+}
+
+/* Estado: Passar o mouse sobre o botão */
+QToolButton:hover {
+    background-color: #3a3a3a;
+    border: 2px solid #ff3333; /* Borda vermelha */
+    color: #ff3333; /* Texto vermelho */
+}
+
+/* Estado: Botão pressionado */
+QToolButton:pressed {
+    background-color: #ff3333;
+    border: 2px solid #ff3333;
+    color: #ffffff; /* Texto branco para contraste no fundo vermelho */
+}
+
+/* Separador vertical na barra */
+QToolBar::separator {
+    background-color: #444444;
+    width: 2px;
+    margin: 5px 2px;
+}
+
+/* --- Estilização das Barras de Rolagem (Scrollbars) --- */
+/* Para dar um visual completo e integrado */
+
+QScrollBar:vertical {
+    border: none;
+    background: #2b2b2b;
+    width: 14px;
+    margin: 0px;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #555555; /* Cor da barra em repouso */
+    min-height: 30px;
+    border-radius: 7px;
+    margin: 2px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: #ff3333; /* Vermelho ao passar o mouse */
+}
+
+/* (O mesmo para a barra horizontal) */
+QScrollBar:horizontal {
+    border: none;
+    background: #2b2b2b;
+    height: 14px;
+    margin: 0px;
+}
+
+QScrollBar::handle:horizontal {
+    background-color: #555555;
+    min-width: 30px;
+    border-radius: 7px;
+    margin: 2px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background-color: #ff3333;
+}
+
+/* Remove os botões de seta das barras de rolagem para um visual mais limpo */
+QScrollBar::add-line, QScrollBar::sub-line {
+    border: none;
+    background: none;
+    height: 0px;
+    width: 0px;
+}
